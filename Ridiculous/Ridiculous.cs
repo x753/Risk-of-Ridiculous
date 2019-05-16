@@ -1,5 +1,6 @@
 ﻿using BepInEx;
 using RoR2;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -25,11 +26,15 @@ namespace Ridiculousness
 		public static Transform[] vagrantSpawner;
 		public static Transform[] bigSpawner;
 
+        SurfaceDef globalSurface = ScriptableObject.CreateInstance<SurfaceDef>();
+
+        public static int teddiesCollected = 0;
+
         public void Awake()
         {
             // Load in our map asset
-            ridiculousAssetBundle = AssetBundle.LoadFromFile(Application.streamingAssetsPath + "/modmap");
-			ridiculousMap = ridiculousAssetBundle.LoadAsset<GameObject>("Assets/modmap.prefab");
+            ridiculousAssetBundle = AssetBundle.LoadFromFile(Application.streamingAssetsPath + "/ridiculous");
+			ridiculousMap = ridiculousAssetBundle.LoadAsset<GameObject>("Assets/ridiculous.prefab");
 
             // Create an array of monsters we're able to spawn in our custom map
             ridiculousMonsters = new string[]
@@ -80,6 +85,8 @@ namespace Ridiculousness
 			    GameObject.Find("teddy easter egg 2").AddComponent<TeddyDrop>();
 			    GameObject.Find("teddy easter egg 3").AddComponent<TeddyDrop>();
 			    GameObject.Find("key for keyhole").AddComponent<KeyDrop>();
+                GameObject.Find("shrine of order").AddComponent<OrderShrine>();
+                GameObject.Find("lakitu hook").AddComponent<ChestDrop>();
 
                 // Locate monster spawn positions
                 basicSpawner = GameObject.Find("basic spawner").GetComponentsInChildren<Transform>();
@@ -113,6 +120,47 @@ namespace Ridiculousness
 
                     Ridiculous.SpawnMonster(monsterName);
                 }
+            };
+
+            // Fix the AI for custom maps
+            On.EntityStates.AI.Walker.Combat.FixedUpdate += (orig, self) =>
+            {
+                if ((RoR2.CharacterAI.AISkillDriver)typeof(EntityStates.AI.Walker.Combat).GetField("dominantSkillDriver", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(self))
+                {
+                    RoR2.CharacterAI.AISkillDriver skillDriver = (RoR2.CharacterAI.AISkillDriver)typeof(EntityStates.AI.Walker.Combat).GetField("dominantSkillDriver", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(self);
+                    skillDriver.ignoreNodeGraph = true;
+                }
+                orig(self);
+            };
+
+            // Don't use drop pods, they're too buggy
+            On.RoR2.SceneDirector.Start += (orig, self) =>
+            {
+                Stage.instance.usePod = false;
+                orig(self);
+            };
+            // Spawn at 0, 0, 0
+            On.RoR2.Stage.GetPlayerSpawnTransform += (orig, self) =>
+            {
+                return new GameObject { transform = { position = Vector3.zero } }.transform;
+            };
+
+            // Track item pickups here
+            On.RoR2.Chat.AddPickupMessage += (orig, body, pickupToken, pickupColor, pickupQuantity) =>
+            {
+                if (pickupToken == "ITEM_TREASURECACHE_NAME")
+                {
+                    body.gameObject.AddComponent<KeyEater>();
+                }
+                if (pickupToken == "ITEM_BEAR_NAME")
+                {
+                    teddiesCollected++;
+                    if (teddiesCollected == 3)
+                    {
+                         // Play 115
+                    }
+                }
+                orig(body, pickupToken, pickupColor, pickupQuantity);
             };
         }
 
@@ -180,6 +228,25 @@ namespace Ridiculousness
 		}
 	}
     // ----------------------------------------------------------------------------
+    public class KeyEater : MonoBehaviour
+    {
+        Vector3 keyEater;
+
+        void Awake()
+        {
+            this.keyEater = GameObject.Find("keyhole easter egg").transform.position;
+        }
+        void Update()
+        {
+            if (Vector3.Distance(this.transform.position, this.keyEater) < 1.5f)
+            {
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("keyhole easter egg"));
+                Util.PlaySound("Play_UI_achievementUnlock", RoR2Application.instance.gameObject);
+                UnityEngine.Component.DestroyImmediate(this);
+            }
+        }
+    }
+    // ----------------------------------------------------------------------------
     public class Pokeball : MonoBehaviour
 	{
 		Vector3 pokeballEater;
@@ -196,6 +263,42 @@ namespace Ridiculousness
 				PickupDropletController.CreatePickupDroplet(new PickupIndex(ItemIndex.ShockNearby), pokeballEater, Vector3.zero);
 			}
 		}
-	}
+    }
+    // ----------------------------------------------------------------------------
+    public class OrderShrine : MonoBehaviour
+    {
+        void Awake()
+        {
+            if (NetworkServer.active)
+            {
+                string shrinePrefab = "prefabs/networkedobjects/ShrineRestack";
+                GameObject shrine = Object.Instantiate<GameObject>(Resources.Load<GameObject>(shrinePrefab), this.transform.position, this.transform.rotation);
+                RoR2.PurchaseInteraction purchaseInteraction = shrine.GetComponent<RoR2.PurchaseInteraction>();
+
+                RoR2.ShrineRestackBehavior orderBehavior = shrine.GetComponent<RoR2.ShrineRestackBehavior>();
+                orderBehavior.maxPurchaseCount = 999;
+                orderBehavior.costMultiplierPerPurchase = 2f;
+
+                purchaseInteraction.costType = CostType.Money;
+                purchaseInteraction.cost = 15;
+                NetworkServer.Spawn(shrine);
+            }
+            UnityEngine.Component.DestroyImmediate(this);
+        }
+    }
+    // ----------------------------------------------------------------------------
+    public class ChestDrop : MonoBehaviour
+    {
+        void Awake()
+        {
+            GameObject chest = Object.Instantiate<GameObject>(Resources.Load<GameObject>("prefabs/networkedobjects/chest1"), this.transform.position - new Vector3(0f, 1.3f, 0f), Quaternion.identity);
+            chest.transform.parent = this.gameObject.transform;
+            NetworkServer.Spawn(chest);
+        }
+        void Update()
+        {
+            UnityEngine.Component.DestroyImmediate(this);
+        }
+    }
     // ----------------------------------------------------------------------------
 }
