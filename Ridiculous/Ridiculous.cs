@@ -1,13 +1,15 @@
 ﻿using BepInEx;
 using RoR2;
 using System;
+using System.IO;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.Networking;
 
 namespace Ridiculousness
 {
-    [BepInPlugin("com.753.RiskOfRidiculous", "Risk of Ridiculous", "0.96")]
+    [BepInPlugin("com.753.RiskOfRidiculous", "Risk of Ridiculous", "0.9.7")]
+    [BepInDependency("com.bepis.r2api")]
 
     public class Ridiculous : BaseUnityPlugin
     {
@@ -31,8 +33,20 @@ namespace Ridiculousness
 
         public void Awake()
         {
+            // Allow for mod-specific matchmaking
+            RoR2.RoR2Application.isModded = false;
+            On.RoR2.RoR2Application.Awake += (orig, self) =>
+            {
+                orig(self);
+                typeof(RoR2Application).GetField("steamBuildId", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, "Ridiculous 0.9.7");
+            };
+            On.RoR2.DisableIfGameModded.OnEnable += (orig, self) =>
+            {
+                RoR2.RoR2Application.isModded = false;
+            };
+
             // Load in our map asset
-            ridiculousAssetBundle = AssetBundle.LoadFromFile(Application.dataPath.Replace("Risk of Rain 2_Data", "BepInEx/plugins/ridiculous.assets"));
+            ridiculousAssetBundle = AssetBundle.LoadFromFile(Application.dataPath.Replace("Risk of Rain 2_Data", "BepInEx/plugins/Risk of Ridiculous/ridiculous.assets"));
 			ridiculousMap = ridiculousAssetBundle.LoadAsset<GameObject>("Assets/ridiculous.prefab");
 
             // Create an array of monsters we're able to spawn in our custom map
@@ -51,7 +65,6 @@ namespace Ridiculousness
                 "LemurianBruiser",
 				"Titan"
 			};
-            spawnDelay = new int[ridiculousMonsters.Length];
 
             // The only stage we should load is testscene
             On.RoR2.Run.PickNextStageScene += (orig, self, choices) =>
@@ -113,7 +126,7 @@ namespace Ridiculousness
                 if (NetworkServer.active) // server only
                 {
                     combatTimer += Time.deltaTime;
-                    if (combatTimer > 5f) // every 5 seconds we try to spawn something
+                    if (combatTimer > Math.Max(5.5f - ((combatMonsterRating*4) / 60), 2f) ) // every 5 seconds or so we spawn something
                     {
                         combatTimer = 0f;
 
@@ -121,7 +134,7 @@ namespace Ridiculousness
                         if (combatMonstersSpawned > 9)
                         {
                             combatMonsterRating++;
-                            combatMonstersSpawned = 0 - combatMonsterRating;
+                            combatMonstersSpawned = 6 - combatMonsterRating;
                         }
 
                         // Choose a random monster
@@ -138,13 +151,13 @@ namespace Ridiculousness
 
                         string monsterName = ridiculousMonsters[monster];
 
-                        if (UnityEngine.Random.Range(0f, 100f) < (float) combatMonsterRating)
+                        if (UnityEngine.Random.Range(0f, 100f) < (float) combatMonsterRating-5)
                         {
-                            Ridiculous.SpawnMonster(monsterName, true); // spawn an elite
+                            Ridiculous.SpawnMonster(monsterName, (monster+1)*4, true); // spawn an elite
                         }
                         else
                         {
-                            Ridiculous.SpawnMonster(monsterName);
+                            Ridiculous.SpawnMonster(monsterName, (monster+1)*4);
                         }
                     }
                 }
@@ -190,6 +203,51 @@ namespace Ridiculousness
                 orig(body, pickupToken, pickupColor, pickupQuantity);
             };
 
+            // We don't level up in this mod, so remove the code for it
+            On.RoR2.UI.HUD.Awake += (orig, self) =>
+            {
+                orig(self);
+                self.levelText.gameObject.transform.parent.gameObject.SetActive(false);
+            };
+            On.RoR2.UI.LevelText.SetDisplayData += (orig, self, _) => { };
+            On.RoR2.UI.LevelText.Update += (orig, self) => { };
+            On.RoR2.UI.LevelText.OnValidate += (orig, self) => { };
+
+            // Ban items that don't work with Risk of Ridiculous
+            On.RoR2.Run.BuildDropTable += (orig, self) =>
+            {
+                self.availableItems.RemoveItem(ItemIndex.WardOnLevel);
+                self.availableItems.RemoveItem(ItemIndex.TreasureCache);
+                self.availableItems.RemoveItem(ItemIndex.BossDamageBonus);
+                self.availableItems.RemoveItem(ItemIndex.Firework);
+
+                orig(self);
+            };
+
+            // Shrines are not typical shrines so we'll give them a cool effect to symbolize that
+            On.RoR2.ShrineChanceBehavior.Start += (orig, self) =>
+            {
+                orig(self);
+                Renderer shrine = self.GetComponentsInChildren<Renderer>()[0];
+                Material[] mats = new Material[]
+                {
+                    Resources.Load<Material>("Materials/matIsFrozen"),
+                    CharacterModel.ghostMaterial
+                };
+                shrine.materials = mats;
+            };
+            On.RoR2.ShrineRestackBehavior.Start += (orig, self) =>
+            {
+                orig(self);
+                Renderer shrine = self.GetComponentsInChildren<Renderer>()[0];
+                Material[] mats = new Material[]
+                {
+                    Resources.Load<Material>("Materials/matIsFrozen"),
+                    CharacterModel.ghostMaterial
+                };
+                shrine.materials = mats;
+            };
+
             // Overwrite the shrine restacking behavior
             On.RoR2.Inventory.ShrineRestackInventory += (orig, self, rng) =>
             {
@@ -212,6 +270,7 @@ namespace Ridiculousness
                     {
                         self.ResetItem(pickupIndex.itemIndex);
                     }
+                    self.ResetItem(ItemIndex.TreasureCache); // reset the key that isn't technically in the drop table
                     self.itemAcquisitionOrder.Clear();
                     self.SetDirtyBit(8u);
 
@@ -230,10 +289,18 @@ namespace Ridiculousness
                     }
                 }
             };
+            On.RoR2.ShrineRestackBehavior.Start += (orig, self) =>
+            {
+                orig(self);
+                self.GetComponent<PurchaseInteraction>().costType = CostType.Money;
+            };
+
+            // Chance shrine should never fail
+            R2API.ItemDropAPI.DefaultShrineFailureWeight = 0f;
         }
 
         // Static method for spawning a new enemy
-        public static void SpawnMonster(string monsterName, bool isElite = false)
+        public static void SpawnMonster(string monsterName, int netWorth, bool isElite = false)
         {
             if (NetworkServer.active) // server only
             {
@@ -266,7 +333,6 @@ namespace Ridiculousness
                 GameObject monster = Instantiate<GameObject>(masterPrefab, spawnPosition, Quaternion.identity);
                 monster.AddComponent<MasterSuicideOnTimer>().lifeTimer = 300f; // 5 minute life timer just in case
                 CharacterMaster master = monster.GetComponent<CharacterMaster>();
-                master.money = 5; // every monster is worth $5 when killed
 
                 if (isElite)
                 {
@@ -278,7 +344,10 @@ namespace Ridiculousness
                     {
                         master.inventory.SetEquipmentIndex(EliteCatalog.GetEliteDef(EliteIndex.Ice).eliteEquipmentIndex);
                     }
+                    netWorth *= 2; // Elites are worth double
                 }
+
+                master.money = (uint)netWorth;
 
                 NetworkServer.Spawn(monster);
                 master.SpawnBody(bodyPrefab, spawnPosition, Quaternion.identity);
@@ -328,7 +397,7 @@ namespace Ridiculousness
         }
         void Update()
         {
-            if (Vector3.Distance(this.transform.position, this.keyEater) < 1.5f)
+            if (Vector3.Distance(this.transform.position, this.keyEater) < 2f)
             {
                 UnityEngine.Object.DestroyImmediate(GameObject.Find("keyhole easter egg"));
                 Util.PlaySound("Play_UI_achievementUnlock", RoR2Application.instance.gameObject);
@@ -368,10 +437,8 @@ namespace Ridiculousness
                 RoR2.ShrineChanceBehavior shrineBehavior = shrine.GetComponent<RoR2.ShrineChanceBehavior>();
                 shrineBehavior.maxPurchaseCount = 999;
                 shrineBehavior.costMultiplierPerPurchase = 1.2f;
-                shrineBehavior.failureWeight = 0f;
 
-                purchaseInteraction.costType = CostType.Money;
-                purchaseInteraction.cost = 10;
+                purchaseInteraction.cost = 25;
                 NetworkServer.Spawn(shrine);
             }
             UnityEngine.Component.DestroyImmediate(this);
@@ -390,10 +457,10 @@ namespace Ridiculousness
 
                 RoR2.ShrineRestackBehavior shrineBehavior = shrine.GetComponent<RoR2.ShrineRestackBehavior>();
                 shrineBehavior.maxPurchaseCount = 999;
-                shrineBehavior.costMultiplierPerPurchase = 1.25f;
+                shrineBehavior.costMultiplierPerPurchase = 1.2f;
 
                 purchaseInteraction.costType = CostType.Money;
-                purchaseInteraction.cost = 10;
+                purchaseInteraction.cost = 25;
                 NetworkServer.Spawn(shrine);
             }
             UnityEngine.Component.DestroyImmediate(this);
