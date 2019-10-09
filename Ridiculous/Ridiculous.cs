@@ -5,10 +5,11 @@ using System.IO;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.Networking;
+using R2API.Utils;
 
 namespace Ridiculousness
 {
-    [BepInPlugin("com.753.RiskOfRidiculous", "Risk of Ridiculous", "0.9.7")]
+    [BepInPlugin("com.753.RiskOfRidiculous", "Risk of Ridiculous", "0.9.8")]
     [BepInDependency("com.bepis.r2api")]
 
     public class Ridiculous : BaseUnityPlugin
@@ -46,8 +47,12 @@ namespace Ridiculousness
             };
 
             // Load in our map asset
-            ridiculousAssetBundle = AssetBundle.LoadFromFile(Application.dataPath.Replace("Risk of Rain 2_Data", "BepInEx/plugins/Risk of Ridiculous/ridiculous.assets"));
-			ridiculousMap = ridiculousAssetBundle.LoadAsset<GameObject>("Assets/ridiculous.prefab");
+            Assembly execAssembly = Assembly.GetExecutingAssembly();
+            using (Stream stream = execAssembly.GetManifestResourceStream("Ridiculous.ridiculous.assets"))
+            {
+                AssetBundle ridiculousAssetBundle = AssetBundle.LoadFromStream(stream);
+                ridiculousMap = ridiculousAssetBundle.LoadAsset<GameObject>("Assets/ridiculous.prefab");
+            }
 
             // Create an array of monsters we're able to spawn in our custom map
             ridiculousMonsters = new string[]
@@ -69,7 +74,9 @@ namespace Ridiculousness
             // The only stage we should load is testscene
             On.RoR2.Run.PickNextStageScene += (orig, self, choices) =>
             {
-                self.nextStageScene = new SceneField("testscene");
+                SceneDef nextScene = ScriptableObject.CreateInstance<SceneDef>();
+                nextScene.SetPropertyValue("sceneName", "testscene");
+                self.nextStageScene = nextScene;
             };
 
             // Initialize the map on start of match
@@ -81,11 +88,15 @@ namespace Ridiculousness
 
 			    // Destroy pre-existing garbage in the scene
 			    UnityEngine.Object.DestroyImmediate(GameObject.Find("Directional Light (SUN)"));
-			    UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
-			    UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
-			    UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
-			    UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
-			    UnityEngine.Object.DestroyImmediate(GameObject.Find("GolemBodyInvincible(Clone)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretMaster"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretMaster (1)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretMaster (2)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretMaster (3)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("EngiTurretBody(Clone)"));
+                UnityEngine.Object.DestroyImmediate(GameObject.Find("GolemBodyInvincible(Clone)"));
 			    UnityEngine.Object.DestroyImmediate(GameObject.Find("Reflection Probe"));
 			    UnityEngine.Object.DestroyImmediate(GameObject.Find("Plane"));
 			    UnityEngine.Object.DestroyImmediate(GameObject.Find("Plane (1)"));
@@ -292,7 +303,7 @@ namespace Ridiculousness
             On.RoR2.ShrineRestackBehavior.Start += (orig, self) =>
             {
                 orig(self);
-                self.GetComponent<PurchaseInteraction>().costType = CostType.Money;
+                self.GetComponent<PurchaseInteraction>().costType = CostTypeIndex.Money;
             };
 
             // Chance shrine should never fail
@@ -459,7 +470,7 @@ namespace Ridiculousness
                 shrineBehavior.maxPurchaseCount = 999;
                 shrineBehavior.costMultiplierPerPurchase = 1.2f;
 
-                purchaseInteraction.costType = CostType.Money;
+                purchaseInteraction.costType = CostTypeIndex.Money;
                 purchaseInteraction.cost = 25;
                 NetworkServer.Spawn(shrine);
             }
